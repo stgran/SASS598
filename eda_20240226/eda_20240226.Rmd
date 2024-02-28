@@ -1,0 +1,489 @@
+---
+title: "Exploratory Data Analysis"
+author: "Soren Gran"
+date: "2024-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ipumsr)
+library(ggplot2)
+library(dagitty)
+
+setwd("~/SASS_598/MEPSproj/eda_rmarkdown")
+```
+
+``` {r include=FALSE}
+source("source_data.R", local = knitr::knit_global())
+```
+
+``` {r include=FALSE}
+# Size of dataset
+# 2020 size
+n_2020 = nrow(data_2020) # 27,805
+
+# 2021 size
+n_2021 = nrow(data_2021) # 28,336
+
+# Full size
+n_full = nrow(full_data) # 19,532
+
+# Prevalence of Diabetes Care Survey (DCS) in 2020 and 2021
+n_dcs = nrow(diabetes_data) # 846
+
+# Prevalence of SDOH supplement of MEPS in 2021
+n_sdoh = nrow(full_data %>% filter(SDOHELIG.y == 2)) # 13,023
+
+# Crossover between 2020-2021 DCS and 2021 SDOH
+n_dcs_sdoh = nrow(diabetes_sdoh_data) # 832
+
+# Sum of diabetes weights for 2021
+weighted_dcs_sdoh = sum(diabetes_sdoh_data$DIABWEIGHT.y)
+
+# Total diabetic population in 2021 based on DCS
+weighted_dcs_2021 = sum(full_data$DIABWEIGHT.y)
+```
+
+## Dataset  
+Number of observations in 2020: `r format(n_2020, big.mark = ",", scientific = FALSE)`  
+
+Number of observations in 2021: `r format(n_2021, big.mark = ",", scientific = FALSE)`  
+
+Number of observations in full dataset: `r format(n_full, big.mark = ",", scientific = FALSE)`  
+
+Number of observations in full dataset who completed DCS in 2020 and 2021: `r format(n_dcs, big.mark = ",", scientific = FALSE)`  
+
+Number of observations in full dataset who completed SDOH in 2021: `r format(n_sdoh, big.mark = ",", scientific = FALSE)`  
+
+Number of observation in full dataset who completed DCS in 2020 and 2021 and SDOH in 2021: `r format(n_dcs_sdoh, big.mark = ",", scientific = FALSE)`  
+
+Our universe of observations (i.e. respondents who completed the DCS in both 2020 and 2021, as well as the SDOH supplement in 2021), when weighted, represents `r format(weighted_dcs_sdoh, big.mark = ",", scientific = FALSE)` non-institutionalized adults with diabetes in the U.S. in 2021.  
+
+This sample represents up `r round(100*weighted_dcs_sdoh/weighted_dcs_2021, 2)`% of the `r format(weighted_dcs_2021, big.mark = ",", scientific = FALSE)` non-institutionalized adults with diabetes in the U.S. in 2021.  
+
+# SDOH vs Outcome Variables
+## DIACONF (2021)
+DIACONF label: Respondent's confidence in treating their diabetes. Administered in 2021 DCS.  
+
+Description: For all persons given the Diabetes Care Survey (DCS) and have been told they have diabetes, DIACONF indicates how confident the respondent is in their ability to care for their diabetes.  
+
+Scale: 0 = "NIU", 1 = "Not confident at all", 2 = "Somewhat confident", 3 = "Confident", 4 = "Very confident", 7 = "Unknown-refused", 8 = "Unknown-not ascertained", 9 = "Unknown-don't know"  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+diaconf_summary <- diabetes_sdoh_data %>%
+  group_by(DIACONF_text.y) %>%
+  summarize(count = n(),
+            weighted_count = sum(DIABWEIGHT.y),
+            in_universe_rate = paste(round(100*sum(DIABWEIGHT.y)/weighted_dcs_sdoh, 2), '%'),
+            average_age = mean(AGE.y),
+            median_age = median(AGE.y)) %>%
+  arrange(
+    match(DIACONF_text.y, c('Not confident at all', 'Somewhat confident', 'Confident', 'Very confident', 'Unknown')), 
+    desc(count), desc(weighted_count), desc(in_universe_rate), desc(average_age), desc(median_age))
+
+diaconf_summary
+```
+
+### DIACONF (2021) vs AGE (2021)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(
+  data = subset(diabetes_sdoh_data, !is.na(AGE.y) & !is.na(DIACONF_text.y)),
+  aes(x = AGE.y, y = factor(DIACONF_text.y, level = c('Not confident at all', 'Somewhat confident', 'Confident', 'Very confident', 'Unknown')))) + geom_point() + scale_size_continuous(range = c(3, 15)) +
+  ylab("Diabetic Person's Reported Confidence in Treating Their Diabetes") + xlab("Age")
+```
+
+
+### TRANSBAR (2021) vs DIACONF (2021)
+TRANSBAR label: Lack of transportation keeps person from medical appointments, meetings, work, or activities of daily living, past 12 months. Administered in 2021 SDOH supplement.  
+
+Description: TRANSBAR indicates whether, during the last 12 months, a lack of reliable transportation kept them from medical appointments, meetings, work, or from getting things needed for daily living.  
+
+Scale: Ratings on a scale of 1 to 9 ("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent")  
+
+#### DIACONF = Not confident at all (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y)), 
+  aes(x = factor(TRANSBAR_text.y, level = c("No", "Yes", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("TRANSBAR (2021) for Diabetics 'Not confident at all'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Not confident at all'\nin Treating their Diabetes (Thousands)") +
+  xlab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Somewhat confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y)), 
+  aes(x = factor(TRANSBAR_text.y, level = c("No", "Yes", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("TRANSBAR (2021) for Diabetics 'Somewhat confident'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Somewhat confident'\nin Treating their Diabetes (Thousands)") +
+  xlab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y)), 
+  aes(x = factor(TRANSBAR_text.y, level = c("No", "Yes", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("TRANSBAR (2021) for Diabetics 'Confident'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Confident'\nin Treating their Diabetes (Thousands)") +
+  xlab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Very Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y)), 
+  aes(x = factor(TRANSBAR_text.y, level = c("No", "Yes", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("TRANSBAR (2021) for Diabetics 'Very confident'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Very confident'\nin Treating their Diabetes (Thousands)") +
+  xlab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+### TRANSBAR (2021) vs DIACONF (2021) vs AGE (2021)  
+
+#### DIACONF = Not confident at all (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all'))`) 
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Somewhat confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Very Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+
+### RATEMEDCARE (2021) vs DIACONF (2021)
+RATEMEDCARE label: Rate neighborhood availability of places to get medical care. Administered in 2021 SDOH supplement.  
+
+Description: RATEMEDCARE indicates the respondent's rating of the availability of places to get medical care in their neighborhood.  
+Scale: Ratings on a scale of 1 to 9 ("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent")  
+
+#### DIACONF = Not confident at all (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all')
+
+ggplot(
+  subset(plot_data, !is.na(RATEMEDCARE_text.y)), 
+  aes(x = factor(RATEMEDCARE_text.y, level = c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("RATEMEDCARE (2021) for Diabetics 'Not confident at all'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Not confident at all'\nin Treating their Diabetes (Thousands)") +
+  xlab("RATEMEDCARE (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Somewhat confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident')
+
+ggplot(
+  subset(plot_data, !is.na(RATEMEDCARE_text.y)), 
+  aes(x = factor(RATEMEDCARE_text.y, level = c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("RATEMEDCARE (2021) for Diabetics 'Somewhat confident'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Somewhat confident'\nin Treating their Diabetes (Thousands)") +
+  xlab("RATEMEDCARE (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident')
+
+ggplot(
+  subset(plot_data, !is.na(RATEMEDCARE_text.y)), 
+  aes(x = factor(RATEMEDCARE_text.y, level = c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("RATEMEDCARE (2021) for Diabetics 'Confident'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Confident'\nin Treating their Diabetes (Thousands)") +
+  xlab("RATEMEDCARE (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Very Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident')
+
+ggplot(
+  subset(plot_data, !is.na(RATEMEDCARE_text.y)), 
+  aes(x = factor(RATEMEDCARE_text.y, level = c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("RATEMEDCARE (2021) for Diabetics 'Very confident'\nin Treating their Diabetes") +
+  ylab("Diabetics Who Reported 'Very confident'\nin Treating their Diabetes (Thousands)") +
+  xlab("RATEMEDCARE (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+### RATEMEDCARE (2021) vs DIACONF (2021) vs AGE (2021)
+
+#### DIACONF = Not confident at all (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Not confident at all')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Somewhat confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Somewhat confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+#### DIACONF = Very Confident (n = `r nrow(diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACONF_text.y == 'Very confident')
+
+ggplot(
+  subset(plot_data, !is.na(TRANSBAR_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(TRANSBAR_text.y, c("No", "Yes", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("TRANSBAR (2021) - Lack of Transportation Kept Person from\nMedical Appts, Work, Daily Activities in Last 12 Mos")
+```
+
+
+## DIACLASS (2021)
+DIACLASS label: Ever took class in diabetes management. Administered in 2021 DCS.  
+
+Description: For all persons given the Diabetes Care Survey (DCS), have been told they have diabetes, and have learned how to take care of their diabetes in the last 12 months, DIACLASS indicates whether the respondent has learned how to treat their diabetes by taking a group class.  
+
+Scale: 0 = "NIU", 1 = "No", 2 = "Yes", 7 = "Unknown-refused", 8 = "Unknown-not ascertained", 9 = "Unknown-don't know"  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+diaclass_summary <- diabetes_sdoh_data %>%
+  group_by(DIACLASS_text.y) %>%
+  summarize(count = n(),
+            weighted_count = sum(DIABWEIGHT.y),
+            in_universe_rate = paste(round(100*sum(DIABWEIGHT.y)/weighted_dcs_sdoh, 2), '%'),
+            average_age = mean(AGE.y),
+            median_age = median(AGE.y)) %>%
+  arrange(
+    match(DIACLASS_text.y, c('No', 'Yes', 'Unknown')), 
+    desc(count), desc(weighted_count), desc(in_universe_rate), desc(average_age), desc(median_age))
+
+diaclass_summary
+```
+
+### DIACLASS (2021) vs AGE (2021)
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(
+  data = subset(diabetes_sdoh_data, !is.na(AGE.y) & !is.na(DIACLASS_text.y)),
+  aes(x = AGE.y, y = factor(DIACLASS_text.y, level = c('No', 'Yes', 'Unknown')))) + geom_point() + scale_size_continuous(range = c(3, 15)) +
+  ylab("Diabetic Person Reports Having Taken\na Class in Diabetes Management") + xlab("Age")
+```
+
+### HARDPAYBASIC (2021) vs DIACLASS (2021)
+HARDPAYBASIC label: How hard to pay for basics like food, housing, medical care, and heating. Administered in 2021 SDOH supplement.  
+
+Description: HARDPAYBASIC indicates how hard it is for the respondent to pay for basics such as food, housing, medical care, and heating.  
+
+Scale: Ratings on a scale of 1 to 5 ("Not at all hard", "Somewhat or not at all hard", "Somewhat hard", "Very or somewhat hard", "Very hard")  
+
+#### DIACLASS = No (n = `r nrow(diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'No'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'No')
+
+ggplot(
+  subset(plot_data, !is.na(HARDPAYBASIC_text.y)), 
+  aes(x = factor(HARDPAYBASIC_text.y, level = c("Not at all hard", "Somewhat or not at all hard", "Somewhat hard", "Very or somewhat hard", "Very hard", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("HARDPAYBASIC (2021) for Diabetics Who Have NOT Taken\na Class in Diabetes Management") +
+  ylab("Diabetics Who Have NOT Taken\na Class in Diabetes Management (Thousands)") +
+  xlab("HARDPAYBASIC (2021) - How hard it is to pay for basics\nlike food, housing, medical care, and heating")
+```
+
+#### DIACLASS = Yes (n = `r nrow(diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'Yes'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'Yes')
+
+ggplot(
+  subset(plot_data, !is.na(HARDPAYBASIC_text.y)), 
+  aes(x = factor(HARDPAYBASIC_text.y, level = c("Not at all hard", "Somewhat or not at all hard", "Somewhat hard", "Very or somewhat hard", "Very hard", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("HARDPAYBASIC (2021) for Diabetics Who Have Taken\na Class in Diabetes Management") +
+  ylab("Diabetics Who Have Taken\na Class in Diabetes Management (Thousands)") +
+  xlab("HARDPAYBASIC (2021) - How hard it is to pay for basics\nlike food, housing, medical care, and heating")
+```
+
+### HARDPAYBASIC (2021) vs DIACLASS (2021) vs AGE (2021)
+
+#### DIACLASS = No (n = `r nrow(diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'No'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'No')
+
+ggplot(
+  subset(plot_data, !is.na(HARDPAYBASIC_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(HARDPAYBASIC_text.y, c("Not at all hard", "Somewhat or not at all hard", "Somewhat hard", "Very or somewhat hard", "Very hard", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("HARDPAYBASIC (2021) - How hard it is to pay for basics\nlike food, housing, medical care, and heating")
+```
+
+#### DIACLASS = Yes (n = `r nrow(diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'Yes'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIACLASS_text.y == 'Yes')
+
+ggplot(
+  subset(plot_data, !is.na(HARDPAYBASIC_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(HARDPAYBASIC_text.y, c("Not at all hard", "Somewhat or not at all hard", "Somewhat hard", "Very or somewhat hard", "Very hard", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("HARDPAYBASIC (2021) - How hard it is to pay for basics\nlike food, housing, medical care, and heating")
+```
+
+## DIETFOLLOW (2021)
+DIETFOLLOW label: Now follow special diet. Administered in 2021 DCS.  
+
+Description: DIETFOLLOW indicates whether a respondent is treating their diabetes by modifying their diet.  
+
+Scale: 0 = "NIU", 10 = "No", 20 = "Yes", 90 = "Unknown", 96 = "Unknown-don't know/refused", 97 = "Unknown-refused", 98 = "Unknown-not ascertained", 99 = "Unknown-don't know"  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+dietfollow_summary <- diabetes_sdoh_data %>%
+  group_by(DIETFOLLOW_text.y) %>%
+  summarize(count = n(),
+            weighted_count = sum(DIABWEIGHT.y),
+            in_universe_rate = paste(round(100*sum(DIABWEIGHT.y)/weighted_dcs_sdoh, 2), '%'),
+            average_age = mean(AGE.y),
+            median_age = median(AGE.y)) %>%
+  arrange(
+    match(DIETFOLLOW_text.y, c('No', 'Yes', 'Unknown')), 
+    desc(count), desc(weighted_count), desc(in_universe_rate), desc(average_age), desc(median_age))
+
+dietfollow_summary
+```
+
+### DIETFOLLOW (2021) vs AGE (2021)
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(
+  data = subset(diabetes_sdoh_data, !is.na(AGE.y) & !is.na(DIETFOLLOW_text.y)),
+  aes(x = AGE.y, y = factor(DIETFOLLOW_text.y, level = c('No', 'Yes', 'Unknown')))) + geom_point() + scale_size_continuous(range = c(3, 15)) +
+  ylab("Diabetic Person Reports Now Following a Special Diet") + xlab("Age")
+```
+
+### RATEHLTHFD (2021) vs DIETFOLLOW (2021)  
+RATEHLTHFD label: Rate neighborhood availability of places to buy healthy food. Administered in 2021 SDOH supplement.  
+
+Description: RATEHLTHFD indicates the respondent's rating of the availability of places to buy healthy food in their neighborhood.  
+
+Scale: Ratings on a scale of 1 to 9 ("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent")  
+
+#### DIETFOLLOW = No (n = `r nrow(diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'No'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'No')
+
+ggplot(
+  subset(plot_data, !is.na(RATEHLTHFD_text.y)), 
+  aes(x = factor(RATEHLTHFD_text.y, level = c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("RATEHLTHFD (2021) for Diabetics Who Do NOT Follow a Special Diet") +
+  ylab("Diabetics Who Do NOT Follow a Special Diet (Thousands)") +
+  xlab("RATEHLTHFD (2021) - Neighborhood availability of places to buy healthy food")
+```
+
+#### DIETFOLLOW = Yes (n = `r nrow(diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'Yes'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'Yes')
+
+ggplot(
+  subset(plot_data, !is.na(RATEHLTHFD_text.y)), 
+  aes(x = factor(RATEHLTHFD_text.y, level = c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")), y = PERWEIGHT.y/1000)
+  ) + geom_col(na.rm = TRUE) + ggtitle("RATEHLTHFD (2021) for Diabetics Who Follow a Special Diet") +
+  ylab("Diabetics Who Follow a Special Diet (Thousands)") +
+  xlab("RATEHLTHFD (2021) - Neighborhood availability of places to buy healthy food")
+```
+
+### RATEHLTHFD (2021) vs DIETFOLLOW (2021) vs AGE (2021)  
+
+#### DIETFOLLOW = No (n = `r nrow(diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'No'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'No')
+
+ggplot(
+  subset(plot_data, !is.na(RATEHLTHFD_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(RATEHLTHFD_text.y, c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("RATEHLTHFD (2021) - Neighborhood availability of places to buy healthy food")
+```
+
+#### DIETFOLLOW = Yes (n = `r nrow(diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'Yes'))`)  
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- diabetes_sdoh_data %>% filter(DIETFOLLOW_text.y == 'Yes')
+
+ggplot(
+  subset(plot_data, !is.na(RATEHLTHFD_text.y) & !is.na(AGE.y)),
+  aes(x = AGE.y, y = factor(RATEHLTHFD_text.y, c("Poor", "Fair or poor", "Fair", "Good or fair", "Good", "Very good or good", "Very good", "Excellent or very good", "Excellent", "Unknown")))
+  ) + geom_point() + scale_size_continuous(range = c(3, 15)) + xlab("Age") + ylab("RATEHLTHFD (2021) - Neighborhood availability of places to buy healthy food")
+```
+
